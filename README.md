@@ -1,6 +1,6 @@
 # Money-Management-classification
 
-This project focuses on building a machine learning model to automatically classify financial transactions into predefined categories. Additionally, this repository explores unsupervised learning techniques to discover natural spending categories and enhance the dataset.
+This project focuses on building a machine learning model to automatically classify financial transactions into predefined categories. Additionally, it explores unsupervised learning techniques to discover natural spending categories.
 
 -----
 
