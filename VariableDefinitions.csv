@@ -1,0 +1,12 @@
+COLUMN_NAME,COLUMN_DEFINATION
+MERCHANT_CATEGORIZED_AT,The time the merchant was categorized by the customer
+MERCHANT_NAME,The name of the merchant
+MERCHANT_CATEGORIZED_AS,The category the merchant was assigned by the customer
+PURCHASE_VALUE,The value of the purchase made by the customer
+PURCHASED_AT,The time the purchase was made
+IS_PURCHASE_PAID_VIA_MPESA_SEND_MONEY,If true indicates that the merchant is not a registered business name
+USER_EMAIL,The email of the customer
+USER_AGE,The age of the customer
+USER_GENDER,The gender of the customer
+USER_HOUSEHOLD,The number of family members
+USER_INCOME,The monthly income of the customer
