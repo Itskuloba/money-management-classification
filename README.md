@@ -4,21 +4,37 @@ This project focuses on building a machine learning model to automatically class
 
 -----
 
-## Project Overview
+## Project Overview  
+This project powers a **smart money manager app** tailored for Kenyan users, enabling seamless tracking of M-Pesa transactions and progress toward savings goals. A core feature is **automated, real-time spending categorization.**   
 
-This project is a smart money manager app that helps users in Kenya track their spending and achieve their savings goals. A key feature is the ability to categorize transactions to understand spending habits. Currently, this process is partly manual. This project aims to automate the classification of transactions into 13 distinct categories using machine learning, improving user experience and providing valuable financial insights.
+Currently, partial manual categorization creates friction and limits user engagement. This project **fully automates transaction classification** using machine learning, combining **merchant name semantics, transaction context, and user behavior** to deliver instant, accurate and personalized financial clarity — all without user input.
 
-###  Project Objectives
+---
 
-  * **Primary Objective:** Develop a high-performing classification model to categorize transactions with high accuracy.
-  * **Secondary Objective:** Utilize unsupervised clustering techniques to discover natural groupings in transaction data, which can be used to validate or refine the existing categories.
-  * **Tertiary Objective:** Implement anomaly detection to identify fraudulent or unusual transactions.
+## Project Objectives  
+
+**Primary Objective:**  
+Develop a **production-ready, high-accuracy multi-class classification model** that automatically assigns one of 8 consolidated, meaningful spending categories to every M-Pesa transaction using merchant name, amount, time, and user metadata.
+
+**Secondary Objective:**  
+Apply **unsupervised clustering (KMeans on TF-IDF vectors)** to discover natural groupings in merchant names, validate existing category definitions, and enable **semi-supervised labeling** of new or ambiguous merchants for continuous model improvement.
+
+**Tertiary Objective:**  
+Implement **anomaly detection** (using isolation forests or reconstruction error from autoencoders) to flag potentially **fraudulent, erroneous, or financially significant outliers** (e.g., unusually large P2P transfers or rare high-value bills), enhancing user trust and financial safety.
 
 -----
 
 ##  The Business Problem
 
-For a financial management app to be effective, it must provide users with a clear, accurate and effortless overview of their spending habits. Manually categorizing every transaction is tedious and a major point of friction for users. An automated system that can instantly and accurately classify expenditures (e.g., "Safaricom" into "Data & WiFi", "Naivas" into "Groceries") is essential for user retention and for providing deeper, data-driven financial advice.
+A financial management app succeeds only when users can instantly understand their spending patterns without manual effort. Requiring users to manually categorize every transaction — such as tagging "Safaricom Tunukiwa" as *Data & WiFi* or "Naivas Supermarket" as *Groceries* — creates significant friction, leading to user drop-off and reduced engagement.
+
+An **automated, accurate, and real-time transaction classification system** is critical to:
+- Eliminate manual tagging,
+- Deliver instant spending insights,
+- Enable personalized budgeting and financial advice,
+- Drive user retention and long-term adoption.
+
+This project builds a robust machine learning pipeline to automatically classify M-Pesa transactions into meaningful spending categories using merchant names, transaction metadata, and user context — transforming raw payment data into actionable financial intelligence.
 
 -----
 
@@ -40,17 +56,24 @@ This project is approached in two main stages: Unsupervised Discovery followed b
 
 Before training a classifier, we use clustering to understand the inherent structure of the transaction data. This helps validate the predefined categories and can be used to label new data more efficiently.
 
-1.  **Text Preprocessing & Vectorization:** Transaction descriptions (`MERCHANT_NAME`) are cleaned (lowercase, remove punctuation). They are then converted into meaningful numerical vectors using **Sentence-BERT embeddings**, which captures semantic similarity.
-2.  **Clustering:** The **DBSCAN** algorithm is applied to the vectors. DBSCAN is chosen for its ability to identify clusters of varying shapes and sizes and its robustness to outliers, which is ideal for noisy transaction data.
-3.  **Cluster Analysis:** The resulting clusters are analyzed to identify common themes (e.g., a cluster containing "Uber," "Bolt," "Little Cab"). This helps in assigning a single category label to an entire group of similar transactions, a technique known as semi-supervised learning.
+1. **Text Preprocessing & Vectorization:** Transaction descriptions (MERCHANT_NAME) are cleaned (lowercase, remove non-alphabetic characters, normalize spaces). They are then converted into a TF-IDF matrix using TfidfVectorizer (with English stop words removed), resulting in a sparse matrix that is converted to a dense array for clustering.
+2. **Clustering:** The KMeans algorithm is applied to the dense TF-IDF vectors. To determine the optimal number of clusters, the elbow method is used by fitting KMeans models for k values ranging from 10 to 25 (with 10 initializations per run for stability), calculating inertia (within-cluster sum of squares), and plotting the results to identify the "elbow" point where inertia decreases more slowly.
+3. **Cluster Analysis:** The resulting clusters are analyzed to identify common themes (e.g., a cluster containing "Uber," "Bolt," "Little Cab"). This helps in assigning a single category label to an entire group of similar transactions, a technique known as semi-supervised learning. Additional clustering options like Gaussian Mixture Models or DBSCAN are available for comparison, with silhouette scores potentially used for evaluation.
 
-### Stop 2: Supervised Learning - Transaction Classification
 
-1.  **Feature Engineering:**
-      * **Text-Based Features:** Features are extracted from the merchant name.
-      * **Time-Based Features:** The transaction timestamp is used to create features like `hour_of_day` and `day_of_week`.
-2.  **Model Selection:** Several models will be evaluated.
-3.  **Model Training & Evaluation:** The model is trained on the `Train.csv` dataset. 
+### Step 2: Supervised Learning - Transaction Classification
+
+Label Preprocessing: Category labels are cleaned by assigning specific merchants to consistent categories (e.g., supermarkets like 'NAIVAS', 'CARREFOUR' to 'Groceries'; utilities like 'KPLC', 'ZUKU' to 'Bills & Fees'; restaurants like 'JAVA', 'CAFE' to 'Going out'). Peer-to-peer transactions are detected using heuristics on merchant names (e.g., checking for personal name patterns via regex, absence of business indicators, digits, or full uppercase) and assigned to 'Family & Friends'. Rare categories (e.g., 'Education', 'Health', 'Emergency fund', 'Rent / Mortgage', 'Loan Repayment') are merged into broader ones like 'Bills & Fees' or 'Miscellaneous' to reduce sparsity and improve model generalization.
+
+**1. Feature Engineering:**
+
+**a)Text-Based Features:** Merchant names are cleaned (lowercased, remove non-alphanumeric) and normalized (uppercased variant). Binary flags are created for keyword matches indicating categories (e.g., data_keywords like 'tunukiwa', 'airtime'; bill_keywords like 'kplc', 'zuku'; supermarket_keywords like 'naivas', 'carrefour'; etc. for banks, transport, loans, health). Strong overrides ensure correct flags for common cases. Merchant frequency is mapped from value counts. Log transformations are applied to 'PURCHASE_VALUE' and 'USER_INCOME'.
+**b)Time-Based Features:** The transaction timestamp ('PURCHASED_AT') is parsed to create features like 'purchase_hour', 'purchase_day_of_week', 'purchase_month', 'is_weekend' (binary), and 'part_of_day' (categorized as 'morning', 'afternoon', 'evening', 'night' with one-hot encoding).
+**c)Other Features:** Binary flag for P2P payments. 'USER_GENDER' is one-hot encoded. 'USER_AGE' is imputed. 'USER_HOUSEHOLD' and other numerics are included. Missing values are imputed with median using SimpleImputer. Specific columns (e.g., age, household, hour, logs) are scaled with StandardScaler.
+
+**2. Model Selection:** Several models are evaluated, including Logistic Regression, Random Forest, XGBoost, and CatBoost.
+
+**3. Model Training & Evaluation:** The dataset is split 80/20 stratified. Class weights are computed for imbalance and applied (sample weights for XGBoost). Hyperparameters are tuned via RandomizedSearchCV and GridSearchCV on macro F1. Models are compared on train/val accuracy, macro F1, precision, recall. Classification reports and confusion matrices are generated. Learning curves (F1 and accuracy) are plotted using cross-validation to assess bias/variance, revealing high overfitting. Misclassified transactions are analyzed in a report showing merchant name, value, true/predicted labels. The best model by val F1 is saved, along with preprocessor artifacts (imputer, scaler, label encoder, etc.).
 
 -----
 
