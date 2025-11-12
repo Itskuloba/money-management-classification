@@ -9,3 +9,4 @@ catboost==1.2.8
 nltk==3.9.2
 matplotlib==3.10.7
 plotly==6.4.0
+xgboost
