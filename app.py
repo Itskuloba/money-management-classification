@@ -14,53 +14,44 @@ warnings.filterwarnings('ignore')
 # ----------------------------------------------------------------------
 # Load artefacts 
 # ----------------------------------------------------------------------
-def load_model_safely(model_path):
-    """Load model with comprehensive XGBoost compatibility handling"""
-    try:
-        # First try direct loading
-        model = joblib.load(model_path)
+# def load_model_safely(model_path):
+#     """Load model with comprehensive XGBoost compatibility handling"""
+#     try:
+#         # First try direct loading
+#         model = joblib.load(model_path)
         
-        # Comprehensive fix for XGBoost compatibility 
-        if hasattr(model, 'use_label_encoder'):
-            delattr(model, 'use_label_encoder')
+#         # Comprehensive fix for XGBoost compatibility 
+#         if hasattr(model, 'use_label_encoder'):
+#             delattr(model, 'use_label_encoder')
         
-        # Remove other deprecated attributes that might cause issues
-        deprecated_attrs = ['use_label_encoder', 'base_score', 'missing']
-        for attr in deprecated_attrs:
-            if hasattr(model, attr):
-                delattr(model, attr)
+#         # Remove other deprecated attributes that might cause issues
+#         deprecated_attrs = ['use_label_encoder', 'base_score', 'missing']
+#         for attr in deprecated_attrs:
+#             if hasattr(model, attr):
+#                 delattr(model, attr)
                 
-        return model
-    except Exception as e:
-        st.error(f"Error loading model: {e}")
-        # Try alternative loading method
-        try:
-            import xgboost as xgb
-            # If it's an XGBoost model, try loading with native method
-            booster_model = xgb.Booster()
-            booster_model.load_model('xgb_model.json')  
-            return booster_model
-        except:
-            return None
+#         return model
+#     except Exception as e:
+#         st.error(f"Error loading model: {e}")
+#         # Try alternative loading method
+#         try:
+#             import xgboost as xgb
+#             # If it's an XGBoost model, try loading with native method
+#             booster_model = xgb.Booster()
+#             booster_model.load_model('xgb_model.json')  
+#             return booster_model
+#         except:
+#             return None
 
 @st.cache_resource
 def load_artifacts():
-    try:
-        model = load_model_safely('best_model_classifier')
-        if model is None:
-            st.error(" Failed to load the classification model. Please check the model file.")
-            st.stop()
-            
-        le = joblib.load('label_encoder.joblib')
-        merchant_counts = joblib.load('merchant_counts.joblib')
-        scaler = joblib.load('scaler.joblib')
-        imputation_vals = joblib.load('imputation_values.joblib')
-        expected_cols = joblib.load('final_model_columns.joblib')
-        
-        return model, le, merchant_counts, scaler, imputation_vals, expected_cols
-    except Exception as e:
-        st.error(f" Error loading artifacts: {str(e)}")
-        st.stop()
+    model          = joblib.load('best_model_classifier')
+    le             = joblib.load('label_encoder.joblib')
+    merchant_counts= joblib.load('merchant_counts.joblib')
+    scaler         = joblib.load('scaler.joblib')
+    imputation_vals= joblib.load('imputation_values.joblib')
+    expected_cols  = joblib.load('final_model_columns.joblib')
+    return model, le, merchant_counts, scaler, imputation_vals, expected_cols
 
 # Load artifacts with error handling
 try:
