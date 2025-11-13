@@ -12,57 +12,34 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # ----------------------------------------------------------------------
+# DEBUG: Show versions 
+# ----------------------------------------------------------------------
+import xgboost as xgb
+st.sidebar.success(f"XGBoost {xgb.__version__} – Python {__import__('sys').version.split()[0]}")
+
+# ----------------------------------------------------------------------
 # Load artefacts 
 # ----------------------------------------------------------------------
-# def load_model_safely(model_path):
-#     """Load model with comprehensive XGBoost compatibility handling"""
-#     try:
-#         # First try direct loading
-#         model = joblib.load(model_path)
-        
-#         # Comprehensive fix for XGBoost compatibility 
-#         if hasattr(model, 'use_label_encoder'):
-#             delattr(model, 'use_label_encoder')
-        
-#         # Remove other deprecated attributes that might cause issues
-#         deprecated_attrs = ['use_label_encoder', 'base_score', 'missing']
-#         for attr in deprecated_attrs:
-#             if hasattr(model, attr):
-#                 delattr(model, attr)
-                
-#         return model
-#     except Exception as e:
-#         st.error(f"Error loading model: {e}")
-#         # Try alternative loading method
-#         try:
-#             import xgboost as xgb
-#             # If it's an XGBoost model, try loading with native method
-#             booster_model = xgb.Booster()
-#             booster_model.load_model('xgb_model.json')  
-#             return booster_model
-#         except:
-#             return None
-
 @st.cache_resource
 def load_artifacts():
-    model          = joblib.load('best_model_classifier')
-    le             = joblib.load('label_encoder.joblib')
-    merchant_counts= joblib.load('merchant_counts.joblib')
-    scaler         = joblib.load('scaler.joblib')
-    imputation_vals= joblib.load('imputation_values.joblib')
-    expected_cols  = joblib.load('final_model_columns.joblib')
+    model           = joblib.load('best_model_classifier')
+    le              = joblib.load('label_encoder.joblib')
+    merchant_counts = joblib.load('merchant_counts.joblib')
+    scaler          = joblib.load('scaler.joblib')
+    imputation_vals = joblib.load('imputation_values.joblib')
+    expected_cols   = joblib.load('final_model_columns.joblib')
     return model, le, merchant_counts, scaler, imputation_vals, expected_cols
 
-# Load artifacts with error handling
+# Load artifacts
 try:
     model, le, merchant_counts, scaler, imputation_values, expected_columns = load_artifacts()
-    st.success(" Model and artifacts loaded successfully!")
+    st.success("Model and artifacts loaded successfully!")
 except Exception as e:
-    st.error(f" Critical error during initialization: {str(e)}")
+    st.error(f"Critical error during initialization: {str(e)}")
     st.stop()
 
 # ----------------------------------------------------------------------
-#  Constants & defaults
+# Constants & defaults
 # ----------------------------------------------------------------------
 DEFAULT_GENDER = 'Male'
 
@@ -83,7 +60,7 @@ cols_to_scale = [
 ]
 
 # ----------------------------------------------------------------------
-#  CORRECTION DICTIONARY
+# CORRECTION DICTIONARY
 # ----------------------------------------------------------------------
 CORRECTION_RULES = {
     "GLADWELL MBURU":               "Miscellaneous",
@@ -115,7 +92,7 @@ CORRECTION_RULES = {
 }
 
 # ----------------------------------------------------------------------
-#  Helpers
+# Helpers
 # ----------------------------------------------------------------------
 def get_part_of_day(hour):
     if 5 <= hour < 12: return 'morning'
@@ -124,7 +101,7 @@ def get_part_of_day(hour):
     else: return 'night'
 
 # ----------------------------------------------------------------------
-#  Feature engineering – PRESERVE PURCHASED_AT, PURCHASE_VALUE, MERCHANT_NAME
+# Feature engineering
 # ----------------------------------------------------------------------
 def engineer_features(input_df):
     df = input_df.copy()
@@ -299,17 +276,14 @@ def apply_rules(df):
     return df
 
 # ----------------------------------------------------------------------
-#  Safe Prediction Function
+# Safe Prediction Function
 # ----------------------------------------------------------------------
 def safe_predict(model, model_input):
-    """Make prediction with comprehensive error handling"""
     try:
-        # Try standard prediction first
         predictions = model.predict(model_input)
         return le.inverse_transform(predictions)
     except Exception as e:
         st.error(f"Prediction error: {e}")
-        # Fallback: return default category
         return ['Miscellaneous'] * len(model_input)
 
 # ----------------------------------------------------------------------
@@ -363,7 +337,6 @@ if method == "Manual":
 
                 st.success(f"**Predicted Category: {final_pred}**")
                 
-                # Show details
                 with st.expander("Transaction Details"):
                     st.write(f"**Merchant:** {merchant}")
                     st.write(f"**Amount:** Ksh {amount:,.2f}")
@@ -486,9 +459,7 @@ else:
 
             st.success("Classification Complete!")
 
-            # --------------------------------------------------
             # SPENDING CHARTS
-            # --------------------------------------------------
             st.markdown("---")
             st.subheader("Spending Analysis")
 
@@ -496,53 +467,31 @@ else:
             spend_df['Amount'] = spend_df['PURCHASE_VALUE'].abs()
 
             if len(spend_df) > 0:
-                # 1. Bar
                 cat_spend = spend_df.groupby('Predicted_Category')['Amount'].sum().sort_values(ascending=False)
-                fig_bar = px.bar(
-                    cat_spend.reset_index(),
-                    x='Predicted_Category',
-                    y='Amount',
-                    title="Total Spending by Category",
-                    labels={'Amount': 'Amount (Ksh)', 'Predicted_Category': 'Category'},
-                    color='Predicted_Category',
-                    text='Amount'
-                )
+                fig_bar = px.bar(cat_spend.reset_index(), x='Predicted_Category', y='Amount',
+                                 title="Total Spending by Category", color='Predicted_Category',
+                                 text='Amount')
                 fig_bar.update_traces(texttemplate='Ksh%{text:,.0f}', textposition='outside')
                 st.plotly_chart(fig_bar, use_container_width=True)
 
-                # 2. Pie
-                fig_pie = px.pie(
-                    cat_spend.reset_index(),
-                    values='Amount',
-                    names='Predicted_Category',
-                    title="Spending Distribution",
-                    hole=0.4
-                )
+                fig_pie = px.pie(cat_spend.reset_index(), values='Amount', names='Predicted_Category',
+                                 title="Spending Distribution", hole=0.4)
                 fig_pie.update_traces(textinfo='percent+label')
                 st.plotly_chart(fig_pie, use_container_width=True)
 
-                # 3. Daily Trend
                 daily = spend_df.groupby(spend_df['PURCHASED_AT'].dt.date)['Amount'].sum().tail(30)
-                fig_line = px.line(
-                    daily.reset_index(),
-                    x='PURCHASED_AT',
-                    y='Amount',
-                    title="Daily Spending (Last 30 Days)",
-                    labels={'Amount': 'Amount (Ksh)', 'PURCHASED_AT': 'Date'}
-                )
+                fig_line = px.line(daily.reset_index(), x='PURCHASED_AT', y='Amount',
+                                   title="Daily Spending (Last 30 Days)")
                 fig_line.update_traces(line=dict(width=3))
                 st.plotly_chart(fig_line, use_container_width=True)
 
-                # 4. Top Merchants
                 top_merchants = spend_df.groupby('MERCHANT_NAME')['Amount'].sum().sort_values(ascending=False).head(5)
                 st.write("**Top 5 Merchants by Spend**")
                 st.dataframe(top_merchants.apply(lambda x: f"Ksh {x:,.0f}").reset_index(), use_container_width=True)
             else:
                 st.info("No spending transactions found to analyze.")
 
-            # --------------------------------------------------
             # Table + Download
-            # --------------------------------------------------
             show_cols = ['Completion Time','Details','Withdrawn','Paid In','Predicted_Category']
             show_cols = [c for c in show_cols if c in df.columns]
 
@@ -552,10 +501,7 @@ else:
             start_idx = (page - 1) * page_size
             end_idx   = page * page_size
 
-            st.dataframe(
-                df[show_cols].iloc[start_idx:end_idx],
-                use_container_width=True
-            )
+            st.dataframe(df[show_cols].iloc[start_idx:end_idx], use_container_width=True)
             st.caption(f"Showing rows {start_idx + 1}–{min(end_idx, len(df))} of {len(df)}")
 
             st.subheader("Prediction Distribution")
