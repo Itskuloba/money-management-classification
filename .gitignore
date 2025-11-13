@@ -1,0 +1,26 @@
+# .gitignore
+# Model artifacts 
+best_model_classifier
+label_encoder.joblib
+merchant_counts.joblib
+scaler.joblib
+imputation_values.joblib
+final_model_columns.joblib
+
+# CatBoost / training logs
+catboost_info/
+
+# Jupyter notebooks & temp files
+*.ipynb
+*.csv
+*.xlsx
+~$*.xlsx
+
+# Local requirements
+requirements.txt.local
+
+# Virtual env
+.venv/
+env/
+__pycache__/
+*.pyc
