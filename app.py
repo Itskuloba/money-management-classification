@@ -7,27 +7,78 @@ import datetime
 import pdfplumber
 import io
 from rapidfuzz import fuzz, process  
+import plotly.express as px
+import warnings
+warnings.filterwarnings('ignore')
 
-# 1. Load artefacts (cached)
+# ----------------------------------------------------------------------
+# Load artefacts 
+# ----------------------------------------------------------------------
+def load_model_safely(model_path):
+    """Load model with comprehensive XGBoost compatibility handling"""
+    try:
+        # First try direct loading
+        model = joblib.load(model_path)
+        
+        # Comprehensive fix for XGBoost compatibility 
+        if hasattr(model, 'use_label_encoder'):
+            delattr(model, 'use_label_encoder')
+        
+        # Remove other deprecated attributes that might cause issues
+        deprecated_attrs = ['use_label_encoder', 'base_score', 'missing']
+        for attr in deprecated_attrs:
+            if hasattr(model, attr):
+                delattr(model, attr)
+                
+        return model
+    except Exception as e:
+        st.error(f"Error loading model: {e}")
+        # Try alternative loading method
+        try:
+            import xgboost as xgb
+            # If it's an XGBoost model, try loading with native method
+            booster_model = xgb.Booster()
+            booster_model.load_model('xgb_model.json')  
+            return booster_model
+        except:
+            return None
+
 @st.cache_resource
 def load_artifacts():
-    model            = joblib.load('best_model_classifier')
-    le               = joblib.load('label_encoder.joblib')
-    merchant_counts  = joblib.load('merchant_counts.joblib')
-    scaler           = joblib.load('scaler.joblib')
-    imputation_vals  = joblib.load('imputation_values.joblib')
-    expected_cols    = joblib.load('final_model_columns.joblib')
-    return model, le, merchant_counts, scaler, imputation_vals, expected_cols
+    try:
+        model = load_model_safely('best_model_classifier')
+        if model is None:
+            st.error(" Failed to load the classification model. Please check the model file.")
+            st.stop()
+            
+        le = joblib.load('label_encoder.joblib')
+        merchant_counts = joblib.load('merchant_counts.joblib')
+        scaler = joblib.load('scaler.joblib')
+        imputation_vals = joblib.load('imputation_values.joblib')
+        expected_cols = joblib.load('final_model_columns.joblib')
+        
+        return model, le, merchant_counts, scaler, imputation_vals, expected_cols
+    except Exception as e:
+        st.error(f" Error loading artifacts: {str(e)}")
+        st.stop()
 
-model, le, merchant_counts, scaler, imputation_values, expected_columns = load_artifacts()
+# Load artifacts with error handling
+try:
+    model, le, merchant_counts, scaler, imputation_values, expected_columns = load_artifacts()
+    st.success(" Model and artifacts loaded successfully!")
+except Exception as e:
+    st.error(f" Critical error during initialization: {str(e)}")
+    st.stop()
 
-# 2. Constants & defaults
+# ----------------------------------------------------------------------
+#  Constants & defaults
+# ----------------------------------------------------------------------
 DEFAULT_GENDER = 'Male'
 
 data_keywords = ['tunukiwa','offers','bundles','airtime','cyber','safaricom','airtel','telkom']
 bill_keywords = ['kplc','prepaid','postpaid','zuku','nairobi water','nhif','dstv']
 bank_keywords = ['bank','equity','kcb','ncba','m-shwari']
-supermarket_keywords = ['carrefour','quickmart','naivas','supermarket']
+supermarket_keywords = ['carrefour','quickmart','naivas','supermarket','clean shelf']
 transport_keywords = ['uber','bolt','parking','go']
 loan_keywords = ['loan','credit','mogo']
 health_keywords = ['pharmacy','hospital','clinic']
@@ -40,7 +91,9 @@ cols_to_scale = [
     'purchase_month','merchant_frequency','purchase_value_log','user_income_log'
 ]
 
-# 3. CORRECTION DICTIONARY – Fixes known model mistakes
+# ----------------------------------------------------------------------
+#  CORRECTION DICTIONARY
+# ----------------------------------------------------------------------
 CORRECTION_RULES = {
     "GLADWELL MBURU":               "Miscellaneous",
     "HARRISON JUMA AYUAK":          "Going out",
@@ -70,41 +123,27 @@ CORRECTION_RULES = {
     "SIXTUS ABOLALA":               "Transport & Fuel",
 }
 
-# 4. P2P & time helpers
-def is_p2p(merchant_name):
-    s = str(merchant_name).strip()
-    business_indicators = [
-        'supermarket','limited','ltd','plc','corporation','corp','company',
-        'co','inc','enterprises','services','industries','hotel','restaurant',
-        'bank','insurance','airlines','school','hospital','pharmacy',
-        'mall','store','shop','market'
-    ]
-    s_low = s.lower()
-    if any(ind in s_low for ind in business_indicators):
-        return 0
-    if s.isupper() or any(c.isdigit() for c in s):
-        return 0
-    if re.match(r'^[A-Z][a-z]+(\s[A-Z][a-z]+){1,2}$', s):
-        return 1
-    return 0
-
+# ----------------------------------------------------------------------
+#  Helpers
+# ----------------------------------------------------------------------
 def get_part_of_day(hour):
     if 5 <= hour < 12: return 'morning'
     elif 12 <= hour < 17: return 'afternoon'
     elif 17 <= hour < 21: return 'evening'
     else: return 'night'
 
-# 5. Feature engineering – MERCHANT_NAME preserved only for rules
+# ----------------------------------------------------------------------
+#  Feature engineering – PRESERVE PURCHASED_AT, PURCHASE_VALUE, MERCHANT_NAME
+# ----------------------------------------------------------------------
 def engineer_features(input_df):
     df = input_df.copy()
 
-    # Preserve MERCHANT_NAME
-    if 'MERCHANT_NAME' in df.columns:
-        merchant_name_series = df['MERCHANT_NAME'].copy()
-    else:
-        merchant_name_series = pd.Series([None] * len(df), name='MERCHANT_NAME')
+    # PRESERVE ORIGINAL COLUMNS
+    purchase_value_series = df['PURCHASE_VALUE'].copy() if 'PURCHASE_VALUE' in df.columns else pd.Series([0.0] * len(df))
+    merchant_name_series = df['MERCHANT_NAME'].copy() if 'MERCHANT_NAME' in df.columns else pd.Series([None] * len(df), name='MERCHANT_NAME')
+    purchased_at_series = df['PURCHASED_AT'].copy() if 'PURCHASED_AT' in df.columns else pd.Series([pd.Timestamp.now()] * len(df))
 
-    # Numeric cleaning
+    # Clean numeric
     for col in ['USER_AGE', 'USER_HOUSEHOLD', 'USER_INCOME', 'PURCHASE_VALUE']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -148,27 +187,31 @@ def engineer_features(input_df):
     df['USER_INCOME'] = df['USER_INCOME'].fillna(0).clip(lower=0)
     df['user_income_log'] = np.log1p(df['USER_INCOME'])
 
-    # Categorical encoding
+    # Categorical
     df['part_of_day'] = pd.Categorical(df['part_of_day'], categories=pod_categories)
     df['USER_GENDER'] = pd.Categorical(df['USER_GENDER'], categories=gender_categories)
     df = pd.get_dummies(df, columns=['USER_GENDER', 'part_of_day'], drop_first=False)
 
-    # Align to training columns
+    # ALIGN TO MODEL COLUMNS
     for col in expected_columns:
         if col not in df.columns:
             df[col] = 0
-    df = df[expected_columns]
+    model_df = df[expected_columns].copy()
 
-    # Scaling
-    df[cols_to_scale] = df[cols_to_scale].replace([np.inf, -np.inf], np.nan).fillna(0)
-    df[cols_to_scale] = scaler.transform(df[cols_to_scale].astype(float))
+    # SCALE
+    model_df[cols_to_scale] = model_df[cols_to_scale].replace([np.inf, -np.inf], np.nan).fillna(0)
+    model_df[cols_to_scale] = scaler.transform(model_df[cols_to_scale].astype(float))
 
-    # Re-attach MERCHANT_NAME
+    # RE-ATTACH ORIGINAL COLUMNS
     df['MERCHANT_NAME'] = merchant_name_series
+    df['PURCHASE_VALUE'] = purchase_value_series
+    df['PURCHASED_AT'] = purchased_at_series
 
-    return df
+    return df, model_df  # full_df, model_input
 
-# 6. M-Pesa parser
+# ----------------------------------------------------------------------
+# M-Pesa parser
+# ----------------------------------------------------------------------
 def parse_mpesa_message(msg):
     data = {'MERCHANT_NAME': None, 'PURCHASE_VALUE': None, 'PURCHASED_AT': None}
     amt = re.search(r'Ksh([\d,\.]+)', msg)
@@ -185,7 +228,9 @@ def parse_mpesa_message(msg):
     if not data['PURCHASED_AT']: data['PURCHASED_AT'] = pd.Timestamp.now()
     return data
 
-# 7. Download helpers
+# ----------------------------------------------------------------------
+# Download helpers
+# ----------------------------------------------------------------------
 @st.cache_data
 def to_csv(df):
     return df.to_csv(index=False).encode('utf-8')
@@ -196,43 +241,88 @@ def to_excel(df):
     df.to_excel(out, index=False, engine='openpyxl')
     return out.getvalue()
 
-# 8. RULE ENGINE 
+# ----------------------------------------------------------------------
+# RULE ENGINE
+# ----------------------------------------------------------------------
 def apply_rules(df):
+    df = df.copy()
+    
     if 'MERCHANT_NAME' not in df.columns:
-        df['MERCHANT_NAME'] = None
-    name_str = df['MERCHANT_NAME'].astype(str).str.strip()
+        df['MERCHANT_NAME'] = df.get('Details', '')
+    df['MERCHANT_NAME'] = df['MERCHANT_NAME'].astype(str).fillna('').str.strip()
+    name_clean = df['MERCHANT_NAME'].str.lower()
+    name_str = df['MERCHANT_NAME']
 
-    # 1. Exact corrections from dictionary
-    for merchant, correct_cat in CORRECTION_RULES.items():
+    if 'Predicted_Category' not in df.columns:
+        df['Predicted_Category'] = 'Miscellaneous'
+
+    # Exact matches
+    for merchant, cat in CORRECTION_RULES.items():
         mask = name_str.str.contains(re.escape(merchant), case=False, na=False)
-        df.loc[mask, 'Predicted_Category'] = correct_cat
+        df.loc[mask, 'Predicted_Category'] = cat
 
-    # 2. Fuzzy-match fallback (90%+ similarity)
+    # Fuzzy
     merchants = list(CORRECTION_RULES.keys())
     for idx, name in enumerate(name_str):
-        if pd.isna(name) or not name:
+        if not name or pd.isna(name):
             continue
         match = process.extractOne(name, merchants, scorer=fuzz.token_sort_ratio)
         if match and match[1] >= 90:
             df.loc[idx, 'Predicted_Category'] = CORRECTION_RULES[match[0]]
 
-    # 3. Keyword rules
-    df.loc[name_str.str.contains('paybill', case=False, na=False), 'Predicted_Category'] = 'Bills & Fees'
-    df.loc[name_str.str.contains('safaricom', case=False, na=False), 'Predicted_Category'] = 'Data & WiFi'
-    df.loc[name_str.str.contains('naivas|carrefour|quickmart|supermarket', case=False, na=False), 'Predicted_Category'] = 'Groceries'
+    # Core rules
+    df.loc[name_clean.str.contains('paybill|safaricom|airtime|bundles|tunukiwa|cyber', na=False), 'Predicted_Category'] = 'Data & WiFi'
+    df.loc[name_clean.str.contains('naivas|quick mart|clean shelf|carrefour|supermarket', na=False), 'Predicted_Category'] = 'Groceries'
+    df.loc[name_clean.str.contains('pay bill|e-citizen|kcb paybill|nhif|kplc|dstv|zuku', na=False), 'Predicted_Category'] = 'Bills & Fees'
 
     # P2P
-    df['is_p2p_tmp'] = df['MERCHANT_NAME'].apply(is_p2p)
-    df.loc[df['is_p2p_tmp'] == 1, 'Predicted_Category'] = 'Family & Friends'
-    df.drop('is_p2p_tmp', axis=1, inplace=True)
+    def is_person_name(name):
+        s = str(name)
+        if re.search(r'\b[A-Z][a-z]+(?:\s[A-Z][a-z]+){0,2}\b', s):
+            bad = ['ltd','limited','bank','shop','mall','hotel','restaurant','cyber','paybill','totalenergies']
+            if any(b in s.lower() for b in bad):
+                return False
+            return True
+        return False
+    df.loc[df['MERCHANT_NAME'].apply(is_person_name), 'Predicted_Category'] = 'Family & Friends'
 
-    # Airtime safety
-    df.loc[name_str.str.contains('tunukiwa|bundles|offers|airtime', case=False, na=False), 'Predicted_Category'] = 'Data & WiFi'
+    # Small business
+    df.loc[name_clean.str.contains('small business', na=False), 'Predicted_Category'] = 'Family & Friends'
+
+    # Withdrawals
+    df.loc[name_clean.str.contains('withdraw|m-shwari|kcb m-pesa withdraw|atm', na=False), 'Predicted_Category'] = 'Miscellaneous'
+
+    # Restaurants
+    df.loc[name_clean.str.contains('java|galitos|waterfront|gardens|alchemist |bar|club|eat|cafe|restaurant|bistro', na=False), 'Predicted_Category'] = 'Going out'
+
+    # Fuel
+    df.loc[name_clean.str.contains('totalenergies|rubis|shell|oil', na=False), 'Predicted_Category'] = 'Transport & Fuel'
+
+    # NEW FIXES
+    df.loc[name_clean.str.contains('transfer of funds charge|pay merchant charge', na=False), 'Predicted_Category'] = 'Bills & Fees'
+    df.loc[name_clean.str.contains('airtime|bundle|data|safaricom data', na=False), 'Predicted_Category'] = 'Data & WiFi'
+    df.loc[name_clean.str.contains('loan request|loan repayment|loan disburse|m-shwari loan', na=False), 'Predicted_Category'] = 'Bills & Fees'
+    df.loc[name_clean.str.contains('pay bill|e-citizen|paybill', na=False), 'Predicted_Category'] = 'Bills & Fees'
+    df.loc[name_clean.str.contains('cyber|communications|yathui|sefran', na=False), 'Predicted_Category'] = 'Data & WiFi'
 
     return df
 
 # ----------------------------------------------------------------------
-# 9. UI
+#  Safe Prediction Function
+# ----------------------------------------------------------------------
+def safe_predict(model, model_input):
+    """Make prediction with comprehensive error handling"""
+    try:
+        # Try standard prediction first
+        predictions = model.predict(model_input)
+        return le.inverse_transform(predictions)
+    except Exception as e:
+        st.error(f"Prediction error: {e}")
+        # Fallback: return default category
+        return ['Miscellaneous'] * len(model_input)
+
+# ----------------------------------------------------------------------
+# UI
 # ----------------------------------------------------------------------
 st.set_page_config(page_title="Money Manager", layout="wide")
 st.title("Money Management Classifier")
@@ -251,10 +341,10 @@ if method == "Manual":
             date     = st.date_input("Date*", datetime.date.today())
             time     = st.time_input("Time*", datetime.datetime.now().time())
         with c2:
-            age      = st.number_input("Age", min_value=1, max_value=120, value=None)
+            age      = st.number_input("Age", min_value=1, max_value=120, value=30)
             gender   = st.selectbox("Gender", ["Male","Female","Prefer not to say"], index=2)
-            house    = st.number_input("Household Size", min_value=1, value=None)
-            income   = st.number_input("Income (Ksh)", min_value=0, value=None)
+            house    = st.number_input("Household Size", min_value=1, value=3)
+            income   = st.number_input("Income (Ksh)", min_value=0, value=50000)
         submitted = st.form_submit_button("Classify")
 
     if submitted:
@@ -273,15 +363,23 @@ if method == "Manual":
                 'USER_INCOME': income
             }])
 
-            feats = engineer_features(df_in)
-            model_input = feats[expected_columns]
-            pred = le.inverse_transform(model.predict(model_input))[0]
+            try:
+                full_df, model_df = engineer_features(df_in)
+                pred = safe_predict(model, model_df)
+                full_df['Predicted_Category'] = pred[0] if len(pred) > 0 else 'Miscellaneous'
+                final_df = apply_rules(full_df)
+                final_pred = final_df['Predicted_Category'].iloc[0]
 
-            feats['Predicted_Category'] = pred
-            final_df = apply_rules(feats)
-            final_pred = final_df['Predicted_Category'].iloc[0]
-
-            st.success(f"**{final_pred}**")
+                st.success(f"**Predicted Category: {final_pred}**")
+                
+                # Show details
+                with st.expander("Transaction Details"):
+                    st.write(f"**Merchant:** {merchant}")
+                    st.write(f"**Amount:** Ksh {amount:,.2f}")
+                    st.write(f"**Date/Time:** {dt.strftime('%Y-%m-%d %H:%M')}")
+                    
+            except Exception as e:
+                st.error(f"Classification error: {e}")
 
 # ---------- M-Pesa Message ----------
 elif method == "M-Pesa Message":
@@ -289,12 +387,13 @@ elif method == "M-Pesa Message":
     msg = st.text_area("Message", height=120, placeholder="RKP... Confirmed. Ksh100 sent to...")
     c1, c2 = st.columns(2)
     with c1:
-        age    = st.number_input("Age", min_value=1, value=None)
-        gender = st.selectbox("Gender", ["Male","Female","Prefer not to say"])
+        age    = st.number_input("Age", min_value=1, value=30, key="msg_age")
+        gender = st.selectbox("Gender", ["Male","Female","Prefer not to say"], key="msg_gender")
     with c2:
-        house  = st.number_input("Household", min_value=1, value=None)
-        income = st.number_input("Income", min_value=0, value=None)
-    if st.button("Classify"):
+        house  = st.number_input("Household", min_value=1, value=3, key="msg_house")
+        income = st.number_input("Income", min_value=0, value=50000, key="msg_income")
+    
+    if st.button("Classify Message"):
         if not msg:
             st.error("Paste a message.")
         else:
@@ -305,7 +404,7 @@ elif method == "M-Pesa Message":
                 g = None if gender == "Prefer not to say" else gender
                 df_in = pd.DataFrame([{
                     'MERCHANT_NAME': parsed['MERCHANT_NAME'],
-                    'PURCHASE_VALUE': parsed['PURCHASE_VALUE'],
+                    'PURCHASE_VALUE': parsed['PURCHASE_VALUE'] or 0.0,
                     'PURCHASED_AT': parsed['PURCHASED_AT'],
                     'USER_AGE': age,
                     'USER_GENDER': g,
@@ -313,15 +412,22 @@ elif method == "M-Pesa Message":
                     'USER_INCOME': income
                 }])
 
-                feats = engineer_features(df_in)
-                model_input = feats[expected_columns]
-                pred = le.inverse_transform(model.predict(model_input))[0]
+                try:
+                    full_df, model_df = engineer_features(df_in)
+                    pred = safe_predict(model, model_df)
+                    full_df['Predicted_Category'] = pred[0] if len(pred) > 0 else 'Miscellaneous'
+                    final_df = apply_rules(full_df)
+                    final_pred = final_df['Predicted_Category'].iloc[0]
 
-                feats['Predicted_Category'] = pred
-                final_df = apply_rules(feats)
-                final_pred = final_df['Predicted_Category'].iloc[0]
-
-                st.success(f"**{final_pred}**")
+                    st.success(f"**Predicted Category: {final_pred}**")
+                    
+                    with st.expander("Parsed Details"):
+                        st.write(f"**Merchant:** {parsed['MERCHANT_NAME']}")
+                        st.write(f"**Amount:** Ksh {parsed['PURCHASE_VALUE'] or 0:,.2f}")
+                        st.write(f"**Date/Time:** {parsed['PURCHASED_AT']}")
+                        
+                except Exception as e:
+                    st.error(f"Classification error: {e}")
 
 # ---------- Upload Statement ----------
 else:
@@ -340,7 +446,7 @@ else:
 
     if file and st.button("Classify Statement"):
         try:
-            # Read file
+            # Load file
             if file.name.endswith('.csv'):
                 df = pd.read_csv(file)
             elif file.name.endswith('.xlsx'):
@@ -356,16 +462,15 @@ else:
 
             df.columns = [str(c).replace('\n', ' ') for c in df.columns]
 
-            # Original preview
             st.subheader("Original Statement (first 5 rows):")
             st.dataframe(df.head(5), use_container_width=True)
 
-            # Map columns
             required = ['Completion Time', 'Details']
             if not all(col in df.columns for col in required):
                 st.error(f"Missing columns: {set(required) - set(df.columns)}")
                 st.stop()
 
+            # Build input
             input_df = pd.DataFrame()
             input_df['PURCHASED_AT']   = pd.to_datetime(df['Completion Time'])
             input_df['MERCHANT_NAME']  = df['Details']
@@ -379,18 +484,74 @@ else:
 
             # Engineering
             with st.spinner("Engineering features..."):
-                feats = engineer_features(input_df)
+                full_df, model_df = engineer_features(input_df)
 
             # Prediction
-            with st.spinner("Classifying..."):
-                model_input = feats[expected_columns]
-                raw_preds = le.inverse_transform(model.predict(model_input))
-                df['Predicted_Category'] = raw_preds
+            with st.spinner("Classifying transactions..."):
+                raw_preds = safe_predict(model, model_df)
+                full_df['Predicted_Category'] = raw_preds
+                df = full_df.copy()
                 df = apply_rules(df)
 
             st.success("Classification Complete!")
 
-            # Paginated table — NO COLORS, NO SOURCE
+            # --------------------------------------------------
+            # SPENDING CHARTS
+            # --------------------------------------------------
+            st.markdown("---")
+            st.subheader("Spending Analysis")
+
+            spend_df = df[df['PURCHASE_VALUE'] < 0].copy()
+            spend_df['Amount'] = spend_df['PURCHASE_VALUE'].abs()
+
+            if len(spend_df) > 0:
+                # 1. Bar
+                cat_spend = spend_df.groupby('Predicted_Category')['Amount'].sum().sort_values(ascending=False)
+                fig_bar = px.bar(
+                    cat_spend.reset_index(),
+                    x='Predicted_Category',
+                    y='Amount',
+                    title="Total Spending by Category",
+                    labels={'Amount': 'Amount (Ksh)', 'Predicted_Category': 'Category'},
+                    color='Predicted_Category',
+                    text='Amount'
+                )
+                fig_bar.update_traces(texttemplate='Ksh%{text:,.0f}', textposition='outside')
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+                # 2. Pie
+                fig_pie = px.pie(
+                    cat_spend.reset_index(),
+                    values='Amount',
+                    names='Predicted_Category',
+                    title="Spending Distribution",
+                    hole=0.4
+                )
+                fig_pie.update_traces(textinfo='percent+label')
+                st.plotly_chart(fig_pie, use_container_width=True)
+
+                # 3. Daily Trend
+                daily = spend_df.groupby(spend_df['PURCHASED_AT'].dt.date)['Amount'].sum().tail(30)
+                fig_line = px.line(
+                    daily.reset_index(),
+                    x='PURCHASED_AT',
+                    y='Amount',
+                    title="Daily Spending (Last 30 Days)",
+                    labels={'Amount': 'Amount (Ksh)', 'PURCHASED_AT': 'Date'}
+                )
+                fig_line.update_traces(line=dict(width=3))
+                st.plotly_chart(fig_line, use_container_width=True)
+
+                # 4. Top Merchants
+                top_merchants = spend_df.groupby('MERCHANT_NAME')['Amount'].sum().sort_values(ascending=False).head(5)
+                st.write("**Top 5 Merchants by Spend**")
+                st.dataframe(top_merchants.apply(lambda x: f"Ksh {x:,.0f}").reset_index(), use_container_width=True)
+            else:
+                st.info("No spending transactions found to analyze.")
+
+            # --------------------------------------------------
+            # Table + Download
+            # --------------------------------------------------
             show_cols = ['Completion Time','Details','Withdrawn','Paid In','Predicted_Category']
             show_cols = [c for c in show_cols if c in df.columns]
 
@@ -406,13 +567,11 @@ else:
             )
             st.caption(f"Showing rows {start_idx + 1}–{min(end_idx, len(df))} of {len(df)}")
 
-            # Distribution
             st.subheader("Prediction Distribution")
             pred_dist = df['Predicted_Category'].value_counts().reset_index()
             pred_dist.columns = ['Category', 'Count']
             st.dataframe(pred_dist, use_container_width=True)
 
-            # Download
             st.write("### Download your classified statement:")
             c1, c2 = st.columns(2)
             with c1:
@@ -422,4 +581,4 @@ else:
                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error processing statement: {e}")
