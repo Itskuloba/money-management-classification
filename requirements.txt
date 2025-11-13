@@ -10,3 +10,4 @@ nltk==3.9.2
 matplotlib==3.10.7
 plotly==6.4.0
 xgboost==1.5.2
+setuptools
