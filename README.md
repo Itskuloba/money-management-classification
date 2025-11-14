@@ -2,6 +2,7 @@
 
 This project focuses on building a machine learning model to automatically classify financial transactions into predefined categories. Additionally, it explores unsupervised learning techniques to discover natural spending categories.
 streamlit app link;https://transactionclassifier.streamlit.app/
+Medium article link;https://medium.com/@nkuloba58/automating-m-pesa-transaction-categorization-building-the-magic-classifier-for-smarter-personal-c1abc24d4577
 -----
 
 ## Project Overview  
