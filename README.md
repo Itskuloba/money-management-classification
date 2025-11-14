@@ -1,7 +1,7 @@
 # Money-Management-classification
 
 This project focuses on building a machine learning model to automatically classify financial transactions into predefined categories. Additionally, it explores unsupervised learning techniques to discover natural spending categories.
-
+streamlit app link;https://transactionclassifier.streamlit.app/
 -----
 
 ## Project Overview  
